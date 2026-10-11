@@ -1,141 +1,459 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
-
-import { db } from "./firebase.js";
+import { db, auth } from "./firebase.js";
 import {
   collection,
   addDoc,
   getDocs,
-  serverTimestamp
+  serverTimestamp,
 } from "firebase/firestore";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
 
-function App() {
+// =========================
+// MAIN APP
+// =========================
+
+export default function App() {
   const [activePage, setActivePage] = useState("home");
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [pendingPage, setPendingPage] = useState("home");
+
+  const protectedPages = [
+    "report-missing",
+    "report-found",
+    "search",
+    "my-reports",
+  ];
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (user) => {
+        setCurrentUser(user);
+        setAuthLoading(false);
+      },
+      (error) => {
+        console.error("Authentication state error:", error);
+        setAuthLoading(false);
+      }
+    );
+
+    return unsubscribe;
+  }, []);
+
+  // Redirect visitors to login before opening protected pages.
+  const navigate = (page) => {
+    if (protectedPages.includes(page) && !currentUser) {
+      setPendingPage(page);
+      setActivePage("login");
+    } else {
+      setActivePage(page);
+    }
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Called after login or registration succeeds.
+  const handleAuthSuccess = () => {
+    setActivePage(pendingPage);
+    setPendingPage("home");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setActivePage("home");
+      setPendingPage("home");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      alert("Unable to log out. Please try again.");
+    }
+  };
 
   const renderPage = () => {
     switch (activePage) {
       case "report-missing":
-        return <ReportMissing setActivePage={setActivePage} />;
+        return (
+          <ReportMissing
+            currentUser={currentUser}
+            setActivePage={navigate}
+          />
+        );
+
       case "report-found":
-        return <ReportFound setActivePage={setActivePage} />;
+        return (
+          <ReportFound
+            currentUser={currentUser}
+            setActivePage={navigate}
+          />
+        );
+
       case "search":
         return <SearchDocuments />;
+
+      case "my-reports":
+        return (
+          <MyReports
+            currentUser={currentUser}
+            setActivePage={navigate}
+          />
+        );
+
       case "login":
-        return <Login setActivePage={setActivePage} />;
+        return (
+          <Login
+            setActivePage={navigate}
+            onAuthSuccess={handleAuthSuccess}
+          />
+        );
+
       case "register":
-        return <Register setActivePage={setActivePage} />;
+        return (
+          <Register
+            setActivePage={navigate}
+            onAuthSuccess={handleAuthSuccess}
+          />
+        );
+
       default:
-        return <Home setActivePage={setActivePage} />;
+        return (
+          <Home
+            currentUser={currentUser}
+            setActivePage={navigate}
+          />
+        );
     }
   };
 
+  if (authLoading) {
+    return <div className="loading-screen">Loading...</div>;
+  }
+
   return (
-    <div className="app">
-      <Navbar activePage={activePage} setActivePage={setActivePage} />
+    <div className="app-container">
+      <Navbar
+        currentUser={currentUser}
+        setActivePage={navigate}
+        onLogout={handleLogout}
+      />
+
       <main>{renderPage()}</main>
+
       <Footer />
     </div>
   );
 }
 
-/* ================= NAVBAR ================= */
-function Navbar({ activePage, setActivePage }) {
+// =========================
+// NAVBAR
+// =========================
+
+function Navbar({ currentUser, setActivePage, onLogout }) {
   return (
     <nav className="navbar">
-      <div className="logo" onClick={() => setActivePage("home")}>
+      <div
+        className="nav-logo"
+        onClick={() => setActivePage("home")}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") setActivePage("home");
+        }}
+      >
         <span className="logo-icon">📄</span>
-        <span>DocFind</span>
+        <span>MissingDoc</span>
       </div>
+
       <div className="nav-links">
-        <button className={activePage === "home"? "active" : ""} onClick={() => setActivePage("home")}>Home</button>
-        <button className={activePage === "report-missing"? "active" : ""} onClick={() => setActivePage("report-missing")}>Report Missing</button>
-        <button className={activePage === "report-found"? "active" : ""} onClick={() => setActivePage("report-found")}>Report Found</button>
-        <button className={activePage === "search"? "active" : ""} onClick={() => setActivePage("search")}>Search</button>
+        <button
+          type="button"
+          className="nav-link"
+          onClick={() => setActivePage("home")}
+        >
+          Home
+        </button>
+
+        {currentUser && (
+          <>
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => setActivePage("report-missing")}
+            >
+              Report Missing
+            </button>
+
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => setActivePage("report-found")}
+            >
+              Report Found
+            </button>
+
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => setActivePage("search")}
+            >
+              Search
+            </button>
+
+            <button
+              type="button"
+              className="nav-link"
+              onClick={() => setActivePage("my-reports")}
+            >
+              My Reports
+            </button>
+          </>
+        )}
       </div>
-      <div className="auth-buttons">
-        <button className="login-btn" onClick={() => setActivePage("login")}>Login</button>
-        <button className="register-btn" onClick={() => setActivePage("register")}>Register</button>
+
+      <div className="nav-auth">
+        {currentUser ? (
+          <>
+            <span className="nav-user">
+              Hi, {currentUser.displayName || currentUser.email}
+            </span>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onLogout}
+            >
+              Logout
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setActivePage("login")}
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setActivePage("register")}
+            >
+              Register
+            </button>
+          </>
+        )}
       </div>
     </nav>
   );
 }
 
-/* ================= HOME ================= */
-function Home({ setActivePage }) {
+// =========================
+// HOME PAGE
+// =========================
+
+function Home({ currentUser, setActivePage }) {
   return (
-    <section className="home">
-      <div className="hero">
+    <div className="home-page">
+      <section className="hero-section">
         <div className="hero-content">
-          <div className="badge">🔐 Secure • Cloud Based • Reliable</div>
-          <h1>Find What You Lost.<br /><span>Report What You Found.</span></h1>
-          <p>A secure cloud-based platform for reporting, searching and recovering missing documents.</p>
+          <p className="hero-tag">LOST SOMETHING? FOUND SOMETHING?</p>
+
+          <h1>
+            Your documents matter.
+            <br />
+            <span>Let's get them back.</span>
+          </h1>
+
+          <p className="hero-description">
+            A simple place to report missing documents, report documents
+            you've found, and help reunite important documents with their
+            owners.
+          </p>
+
           <div className="hero-buttons">
-            <button className="primary-btn" onClick={() => setActivePage("report-missing")}>Report Missing Document</button>
-            <button className="secondary-btn" onClick={() => setActivePage("report-found")}>Report Found Document</button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setActivePage("report-missing")}
+            >
+              Report a Missing Document
+            </button>
+
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setActivePage("report-found")}
+            >
+              I Found a Document
+            </button>
           </div>
+
+          {!currentUser && (
+            <p className="auth-note">
+              Please log in or register to report or search for documents.
+            </p>
+          )}
         </div>
-        <div className="hero-card">
-          <div className="document-icon">📄</div>
-          <h3>Document Recovery</h3>
-          <p>Your reports are securely stored and managed using cloud technology.</p>
-          <div className="status"><span className="status-dot"></span>System Online</div>
+      </section>
+
+      <section className="features-section">
+        <div className="section-heading">
+          <h2>How can we help?</h2>
+          <p>Three simple steps to help documents find their owners.</p>
         </div>
-      </div>
-      <div className="features">
-        <Feature icon="🔍" title="Easy Search" text="Search for reported missing and found documents." />
-        <Feature icon="☁️" title="Cloud Storage" text="Document information is securely stored in the cloud." />
-        <Feature icon="🔔" title="Notifications" text="Receive notifications when a possible match is found." />
-        <Feature icon="🛡️" title="Secure" text="Authentication and access control protect your information." />
-      </div>
-      <div className="how-section">
-        <h2>How It Works</h2>
-        <p className="section-description">Recovering a missing document is simple.</p>
-        <div className="steps">
-          <Step number="1" title="Report" text="Report your missing or found document." />
-          <Step number="2" title="Search" text="The system searches available reports." />
-          <Step number="3" title="Match" text="Possible missing and found documents are matched." />
-          <Step number="4" title="Recover" text="Verify the match and recover your document." />
+
+        <div className="features-grid">
+          <Feature
+            icon="🔎"
+            title="Search Documents"
+            description="Look for documents reported by other users using their type and location."
+            onClick={() => setActivePage("search")}
+          />
+
+          <Feature
+            icon="📢"
+            title="Report Missing"
+            description="Submit a report when an important document has been lost."
+            onClick={() => setActivePage("report-missing")}
+          />
+
+          <Feature
+            icon="🤝"
+            title="Report Found"
+            description="Let others know when you have found a document."
+            onClick={() => setActivePage("report-found")}
+          />
         </div>
-      </div>
-    </section>
+      </section>
+
+      <section className="steps-section">
+        <div className="section-heading">
+          <h2>Getting started is easy</h2>
+        </div>
+
+        <div className="steps-grid">
+          <Step
+            number="01"
+            title="Create an account"
+            description="Log in or register to access document services."
+          />
+          <Step
+            number="02"
+            title="Submit a report"
+            description="Provide the document type, date, location, and details."
+          />
+          <Step
+            number="03"
+            title="Search and reconnect"
+            description="Search reports to help a missing document reach its owner."
+          />
+        </div>
+      </section>
+    </div>
   );
 }
 
-function Feature({ icon, title, text }) {
-  return (<div className="feature-card"><div className="feature-icon">{icon}</div><h3>{title}</h3><p>{text}</p></div>);
-}
-function Step({ number, title, text }) {
-  return (<div className="step"><div className="step-number">{number}</div><h3>{title}</h3><p>{text}</p></div>);
+function Feature({ icon, title, description, onClick }) {
+  return (
+    <button
+      type="button"
+      className="feature-card"
+      onClick={onClick}
+    >
+      <span className="feature-icon">{icon}</span>
+      <h3>{title}</h3>
+      <p>{description}</p>
+      <span className="feature-action">Get started →</span>
+    </button>
+  );
 }
 
-/* ================= REPORT MISSING - FIXED WITH FIREBASE ================= */
-function ReportMissing({ setActivePage }) {
+function Step({ number, title, description }) {
+  return (
+    <div className="step-card">
+      <span className="step-number">{number}</span>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+// =========================
+// REPORT MISSING DOCUMENT
+// =========================
+
+function ReportMissing({ currentUser, setActivePage }) {
   const [formData, setFormData] = useState({
-    documentType: "", documentName: "", documentNumber: "", lostDate: "", lostLocation: "", description: "", image: null,
+    documentType: "",
+    documentName: "",
+    documentNumber: "",
+    lostDate: "",
+    lostLocation: "",
+    description: "",
+    image: null,
   });
+
   const [loading, setLoading] = useState(false);
 
-  const handleChange = (e) => {
-    const { name, value, files } = e.target;
-    setFormData({...formData, [name]: files? files[0] : value });
+  const handleChange = (event) => {
+    const { name, value, files } = event.target;
+
+    setFormData((previous) => ({
+      ...previous,
+      [name]: files ? files[0] || null : value,
+    }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!currentUser) {
+      alert("Please log in to report a missing document.");
+      setActivePage("login");
+      return;
+    }
+
     try {
+      setLoading(true);
+
       await addDoc(collection(db, "missingDocuments"), {
-       ...formData,
-        image: formData.image? formData.image.name : "",
+        documentType: formData.documentType,
+        documentName: formData.documentName.trim(),
+        documentNumber: formData.documentNumber.trim(),
+        lostDate: formData.lostDate,
+        lostLocation: formData.lostLocation.trim(),
+        description: formData.description.trim(),
+        image: formData.image ? formData.image.name : "",
+        userId: currentUser.uid,
         status: "missing",
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
-      alert("✅ Missing document report SAVED to Firebase successfully!");
-      setActivePage("home");
+
+      alert("Your missing document report was submitted successfully.");
+
+      setFormData({
+        documentType: "",
+        documentName: "",
+        documentNumber: "",
+        lostDate: "",
+        lostLocation: "",
+        description: "",
+        image: null,
+      });
+
+      setActivePage("my-reports");
     } catch (error) {
-      alert("Error: " + error.message);
-      console.error(error);
+      console.error("Error submitting missing report:", error);
+      alert("Unable to submit the report. Please check your connection and Firebase permissions.");
     } finally {
       setLoading(false);
     }
@@ -143,53 +461,187 @@ function ReportMissing({ setActivePage }) {
 
   return (
     <section className="form-page">
-      <div className="form-container">
-        <div className="form-header"><div className="form-icon">🔎</div><h1>Report Missing Document</h1><p>Provide the details below to report your missing document.</p></div>
+      <div className="form-card">
+        <h1>Report a Missing Document</h1>
+        <p className="form-description">
+          Enter the details below to help others identify your missing document.
+        </p>
+
         <form onSubmit={handleSubmit}>
-          <div className="form-row">
-            <div className="form-group"><label>Document Type</label><select name="documentType" value={formData.documentType} onChange={handleChange} required><option value="">Select document type</option><option>Aadhaar Card</option><option>PAN Card</option><option>Driving License</option><option>Passport</option><option>Voter ID</option><option>College ID</option><option>Employee ID</option><option>Vehicle Registration</option><option>Other</option></select></div>
-            <div className="form-group"><label>Document Name</label><input type="text" name="documentName" placeholder="Enter document name" value={formData.documentName} onChange={handleChange} required /></div>
+          <div className="form-group">
+            <label htmlFor="missing-documentType">Document Type *</label>
+            <select
+              id="missing-documentType"
+              name="documentType"
+              value={formData.documentType}
+              onChange={handleChange}
+              required
+            >
+              <option value="">Select document type</option>
+              <option value="Aadhaar Card">Aadhaar Card</option>
+              <option value="PAN Card">PAN Card</option>
+              <option value="Driving Licence">Driving Licence</option>
+              <option value="Passport">Passport</option>
+              <option value="Voter ID">Voter ID</option>
+              <option value="College ID">College ID</option>
+              <option value="Certificate">Certificate</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
-          <div className="form-row">
-            <div className="form-group"><label>Document Number</label><input type="text" name="documentNumber" placeholder="Enter document number" value={formData.documentNumber} onChange={handleChange} required /><small>Your complete document number should not be publicly displayed.</small></div>
-            <div className="form-group"><label>Lost Date</label><input type="date" name="lostDate" value={formData.lostDate} onChange={handleChange} required /></div>
+
+          <div className="form-group">
+            <label htmlFor="missing-documentName">Document Holder's Name *</label>
+            <input
+              id="missing-documentName"
+              name="documentName"
+              value={formData.documentName}
+              onChange={handleChange}
+              placeholder="Enter the name on the document"
+              required
+            />
           </div>
-          <div className="form-group"><label>Lost Location</label><input type="text" name="lostLocation" placeholder="Example: Belagavi Bus Stand" value={formData.lostLocation} onChange={handleChange} required /></div>
-          <div className="form-group"><label>Description</label><textarea name="description" rows="5" placeholder="Describe where and how you lost the document..." value={formData.description} onChange={handleChange} required></textarea></div>
-          <div className="form-group"><label>Upload Document Image</label><input type="file" name="image" accept="image/png,image/jpeg" onChange={handleChange} /><small>Accepted formats: JPG and PNG</small></div>
-          <button type="submit" className="submit-btn" disabled={loading}>{loading? "Saving to Firebase..." : "Submit Missing Report"}</button>
+
+          <div className="form-group">
+            <label htmlFor="missing-documentNumber">
+              Document Number (optional)
+            </label>
+            <input
+              id="missing-documentNumber"
+              name="documentNumber"
+              value={formData.documentNumber}
+              onChange={handleChange}
+              placeholder="Enter only if necessary"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="missing-lostDate">Date Lost *</label>
+            <input
+              id="missing-lostDate"
+              type="date"
+              name="lostDate"
+              value={formData.lostDate}
+              onChange={handleChange}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="missing-lostLocation">Location Lost *</label>
+            <input
+              id="missing-lostLocation"
+              name="lostLocation"
+              value={formData.lostLocation}
+              onChange={handleChange}
+              placeholder="Enter the area or location"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="missing-description">Additional Details</label>
+            <textarea
+              id="missing-description"
+              name="description"
+              value={formData.description}
+              onChange={handleChange}
+              placeholder="Add useful details about the document"
+              rows="4"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="missing-image">Document Image (optional)</label>
+            <input
+              id="missing-image"
+              type="file"
+              name="image"
+              accept="image/*"
+              onChange={handleChange}
+            />
+            <small>
+              This version records the selected filename; it does not upload
+              the image itself.
+            </small>
+          </div>
+
+          <button
+            type="submit"
+            className="btn-primary form-submit"
+            disabled={loading}
+          >
+            {loading ? "Submitting..." : "Submit Missing Report"}
+          </button>
         </form>
       </div>
     </section>
   );
 }
 
-/* ================= REPORT FOUND - FIXED WITH FIREBASE ================= */
-function ReportFound({ setActivePage }) {
+// =========================
+// REPORT FOUND DOCUMENT
+// =========================
+
+function ReportFound({ currentUser, setActivePage }) {
   const [formData, setFormData] = useState({
-    documentType: "", documentName: "", foundDate: "", foundLocation: "", description: "", image: null,
+    documentType: "",
+    documentName: "",
+    foundDate: "",
+    foundLocation: "",
+    description: "",
+    image: null,
   });
+
   const [loading, setLoading] = useState(false);
 
-  const handleChange = (e) => {
-    const { name, value, files } = e.target;
-    setFormData({...formData, [name]: files? files[0] : value });
+  const handleChange = (event) => {
+    const { name, value, files } = event.target;
+
+    setFormData((previous) => ({
+      ...previous,
+      [name]: files ? files[0] || null : value,
+    }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!currentUser) {
+      alert("Please log in to report a found document.");
+      setActivePage("login");
+      return;
+    }
+
     try {
+      setLoading(true);
+
       await addDoc(collection(db, "foundDocuments"), {
-       ...formData,
-        image: formData.image? formData.image.name : "",
+        documentType: formData.documentType,
+        documentName: formData.documentName.trim(),
+        foundDate: formData.foundDate,
+        foundLocation: formData.foundLocation.trim(),
+        description: formData.description.trim(),
+        image: formData.image ? formData.image.name : "",
+        userId: currentUser.uid,
         status: "found",
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
-      alert("✅ Found document report SAVED to Firebase successfully!");
-      setActivePage("home");
+
+      alert("Your found document report was submitted successfully.");
+
+      setFormData({
+        documentType: "",
+        documentName: "",
+        foundDate: "",
+        foundLocation: "",
+        description: "",
+        image: null,
+      });
+
+      setActivePage("my-reports");
     } catch (error) {
-      alert("Error: " + error.message);
+      console.error("Error submitting found report:", error);
+      alert("Unable to submit the report. Please check your connection and Firebase permissions.");
     } finally {
       setLoading(false);
     }
@@ -197,74 +649,182 @@ function ReportFound({ setActivePage }) {
 
   return (
     <section className="form-page">
-      <div className="form-container">
-        <div className="form-header"><div className="form-icon">📦</div><h1>Report Found Document</h1><p>Help someone recover their missing document.</p></div>
+      <div className="form-card">
+        <h1>Report a Found Document</h1>
+        <p className="form-description">
+          Found a document? Submit its details to help reconnect it with its owner.
+        </p>
+
         <form onSubmit={handleSubmit}>
-          <div className="form-row">
-            <div className="form-group"><label>Document Type</label><select name="documentType" value={formData.documentType} onChange={handleChange} required><option value="">Select document type</option><option>Aadhaar Card</option><option>PAN Card</option><option>Driving License</option><option>Passport</option><option>Voter ID</option><option>College ID</option><option>Employee ID</option><option>Vehicle Registration</option><option>Other</option></select></div>
-            <div className="form-group"><label>Document Name</label><input type="text" name="documentName" placeholder="Enter document name" value={formData.documentName} onChange={handleChange} required /></div>
+          <div className="form-group">
+            <label htmlFor="found-documentType">Document Type *</label>
+            <select
+              id="found-documentType"
+              name="documentType"
+              value={formData.documentType}
+              onChange={handleChange}
+              required
+            >
+              <option value="">Select document type</option>
+              <option value="Aadhaar Card">Aadhaar Card</option>
+              <option value="PAN Card">PAN Card</option>
+              <option value="Driving Licence">Driving Licence</option>
+              <option value="Passport">Passport</option>
+              <option value="Voter ID">Voter ID</option>
+              <option value="College ID">College ID</option>
+              <option value="Certificate">Certificate</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
-          <div className="form-row">
-            <div className="form-group"><label>Found Date</label><input type="date" name="foundDate" value={formData.foundDate} onChange={handleChange} required /></div>
-            <div className="form-group"><label>Found Location</label><input type="text" name="foundLocation" placeholder="Example: Belagavi Railway Station" value={formData.foundLocation} onChange={handleChange} required /></div>
+
+          <div className="form-group">
+            <label htmlFor="found-documentName">Name on Document (if visible)</label>
+            <input
+              id="found-documentName"
+              name="documentName"
+              value={formData.documentName}
+              onChange={handleChange}
+              placeholder="Enter the name if visible"
+            />
           </div>
-          <div className="form-group"><label>Description</label><textarea name="description" rows="5" placeholder="Describe where you found the document..." value={formData.description} onChange={handleChange} required></textarea></div>
-          <div className="form-group"><label>Upload Document Image</label><input type="file" name="image" accept="image/png,image/jpeg" onChange={handleChange} /></div>
-          <button type="submit" className="submit-btn" disabled={loading}>{loading? "Saving to Firebase..." : "Submit Found Report"}</button>
+
+          <div className="form-group">
+            <label htmlFor="found-foundDate">Date Found *</label>
+            <input
+              id="found-foundDate"
+              type="date"
+              name="foundDate"
+              value={formData.foundDate}
+              onChange={handleChange}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="found-foundLocation">Location Found *</label>
+            <input
+              id="found-foundLocation"
+              name="foundLocation"
+              value={formData.foundLocation}
+              onChange={handleChange}
+              placeholder="Enter the area or location"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="found-description">Additional Details</label>
+            <textarea
+              id="found-description"
+              name="description"
+              value={formData.description}
+              onChange={handleChange}
+              placeholder="Describe where or how you found it"
+              rows="4"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="found-image">Document Image (optional)</label>
+            <input
+              id="found-image"
+              type="file"
+              name="image"
+              accept="image/*"
+              onChange={handleChange}
+            />
+            <small>
+              This version records the selected filename; it does not upload
+              the image itself.
+            </small>
+          </div>
+
+          <button
+            type="submit"
+            className="btn-primary form-submit"
+            disabled={loading}
+          >
+            {loading ? "Submitting..." : "Submit Found Report"}
+          </button>
         </form>
       </div>
     </section>
   );
 }
 
-
-/* ================= SEARCH ================= */
+// =========================
+// SEARCH DOCUMENTS
+// =========================
 
 function SearchDocuments() {
   const [documentType, setDocumentType] = useState("");
   const [location, setLocation] = useState("");
-  const [searched, setSearched] = useState(false);
+  const [reportType, setReportType] = useState("all");
   const [results, setResults] = useState([]);
+  const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
+  const handleSearch = async (event) => {
+    event.preventDefault();
     setLoading(true);
-    setError("");
     setSearched(true);
 
     try {
-      const snapshot = await getDocs(
-        collection(db, "foundDocuments")
-      );
+      const allResults = [];
 
-      const documents = snapshot.docs.map((item) => ({
-        id: item.id,
-        ...item.data()
-      }));
+      if (reportType === "all" || reportType === "missing") {
+        const snapshot = await getDocs(
+          collection(db, "missingDocuments")
+        );
 
-      const filtered = documents.filter((doc) => {
+        snapshot.forEach((documentSnapshot) => {
+          allResults.push({
+            id: documentSnapshot.id,
+            ...documentSnapshot.data(),
+            reportType: "missing",
+          });
+        });
+      }
+
+      if (reportType === "all" || reportType === "found") {
+        const snapshot = await getDocs(
+          collection(db, "foundDocuments")
+        );
+
+        snapshot.forEach((documentSnapshot) => {
+          allResults.push({
+            id: documentSnapshot.id,
+            ...documentSnapshot.data(),
+            reportType: "found",
+          });
+        });
+      }
+
+      const normalizedLocation = location.trim().toLowerCase();
+
+      const filtered = allResults.filter((item) => {
         const matchesType =
-          !documentType ||
-          doc.documentType?.toLowerCase() ===
-            documentType.toLowerCase();
+          !documentType || item.documentType === documentType;
+
+        const itemLocation =
+          item.reportType === "missing"
+            ? item.lostLocation
+            : item.foundLocation;
 
         const matchesLocation =
-          !location ||
-          doc.foundLocation?.toLowerCase().includes(
-            location.trim().toLowerCase()
-          );
+          !normalizedLocation ||
+          (itemLocation || "")
+            .toLowerCase()
+            .includes(normalizedLocation);
 
         return matchesType && matchesLocation;
       });
 
       setResults(filtered);
-    } catch (err) {
-      console.error("Search failed:", err);
-      setError(
-        "Unable to load reports. Check your internet connection and Firestore rules."
-      );
+    } catch (error) {
+      console.error("Error searching documents:", error);
+      alert("Unable to search reports. Check your Firebase permissions.");
+      setResults([]);
     } finally {
       setLoading(false);
     }
@@ -272,130 +832,530 @@ function SearchDocuments() {
 
   return (
     <section className="search-page">
-      <div className="search-container">
+      <div className="page-heading">
         <h1>Search Documents</h1>
-        <p>Search reports of documents that have been found.</p>
+        <p>Search reports by document type and location.</p>
+      </div>
 
-        <form onSubmit={handleSearch}>
-          <div className="form-row">
-            <div className="form-group">
-              <label>Document Type</label>
-              <select
-                value={documentType}
-                onChange={(e) => setDocumentType(e.target.value)}
+      <form className="search-form" onSubmit={handleSearch}>
+        <div className="form-group">
+          <label htmlFor="search-documentType">Document Type</label>
+          <select
+            id="search-documentType"
+            value={documentType}
+            onChange={(event) => setDocumentType(event.target.value)}
+          >
+            <option value="">All document types</option>
+            <option value="Aadhaar Card">Aadhaar Card</option>
+            <option value="PAN Card">PAN Card</option>
+            <option value="Driving Licence">Driving Licence</option>
+            <option value="Passport">Passport</option>
+            <option value="Voter ID">Voter ID</option>
+            <option value="College ID">College ID</option>
+            <option value="Certificate">Certificate</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="search-location">Location</label>
+          <input
+            id="search-location"
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
+            placeholder="Enter a location"
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="search-reportType">Report Type</label>
+          <select
+            id="search-reportType"
+            value={reportType}
+            onChange={(event) => setReportType(event.target.value)}
+          >
+            <option value="all">Missing and found</option>
+            <option value="missing">Missing documents</option>
+            <option value="found">Found documents</option>
+          </select>
+        </div>
+
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={loading}
+        >
+          {loading ? "Searching..." : "Search"}
+        </button>
+      </form>
+
+      {searched && (
+        <div className="search-results">
+          <h2>
+            {loading ? "Searching..." : `${results.length} report(s) found`}
+          </h2>
+
+          {!loading && results.length === 0 && (
+            <p className="empty-state">
+              No matching reports were found. Try changing your search filters.
+            </p>
+          )}
+
+          <div className="reports-grid">
+            {results.map((item) => {
+              const isMissing = item.reportType === "missing";
+              const itemLocation = isMissing
+                ? item.lostLocation
+                : item.foundLocation;
+              const itemDate = isMissing
+                ? item.lostDate
+                : item.foundDate;
+
+              return (
+                <article className="report-card" key={`${item.reportType}-${item.id}`}>
+                  <span
+                    className={`status-badge ${
+                      isMissing ? "status-missing" : "status-found"
+                    }`}
+                  >
+                    {isMissing ? "Missing" : "Found"}
+                  </span>
+
+                  <h3>{item.documentType || "Document"}</h3>
+                  <p>
+                    <strong>Name:</strong>{" "}
+                    {item.documentName || "Not provided"}
+                  </p>
+                  <p>
+                    <strong>Location:</strong>{" "}
+                    {itemLocation || "Not provided"}
+                  </p>
+                  <p>
+                    <strong>Date:</strong> {itemDate || "Not provided"}
+                  </p>
+
+                  {item.description && (
+                    <p>
+                      <strong>Details:</strong> {item.description}
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// =========================
+// MY REPORTS
+// =========================
+
+function MyReports({ currentUser, setActivePage }) {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadReports = async () => {
+      if (!currentUser) {
+        setReports([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const allReports = [];
+
+        const missingSnapshot = await getDocs(
+          collection(db, "missingDocuments")
+        );
+
+        missingSnapshot.forEach((documentSnapshot) => {
+          const data = documentSnapshot.data();
+
+          if (data.userId === currentUser.uid) {
+            allReports.push({
+              id: documentSnapshot.id,
+              ...data,
+              reportType: "missing",
+            });
+          }
+        });
+
+        const foundSnapshot = await getDocs(
+          collection(db, "foundDocuments")
+        );
+
+        foundSnapshot.forEach((documentSnapshot) => {
+          const data = documentSnapshot.data();
+
+          if (data.userId === currentUser.uid) {
+            allReports.push({
+              id: documentSnapshot.id,
+              ...data,
+              reportType: "found",
+            });
+          }
+        });
+
+        if (!cancelled) {
+          setReports(allReports);
+        }
+      } catch (error) {
+        console.error("Error loading your reports:", error);
+        if (!cancelled) {
+          alert("Unable to load your reports. Check your Firebase permissions.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadReports();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
+
+  if (!currentUser) {
+    return (
+      <section className="empty-state">
+        <h1>Please log in</h1>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => setActivePage("login")}
+        >
+          Login
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="my-reports-page">
+      <div className="page-heading">
+        <h1>My Reports</h1>
+        <p>View the missing and found document reports you submitted.</p>
+      </div>
+
+      {loading ? (
+        <p className="loading-message">Loading your reports...</p>
+      ) : reports.length === 0 ? (
+        <div className="empty-state">
+          <h2>No reports yet</h2>
+          <p>You have not submitted any document reports.</p>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setActivePage("report-missing")}
+          >
+            Create a Report
+          </button>
+        </div>
+      ) : (
+        <div className="reports-grid">
+          {reports.map((item) => {
+            const isMissing = item.reportType === "missing";
+            const itemLocation = isMissing
+              ? item.lostLocation
+              : item.foundLocation;
+            const itemDate = isMissing
+              ? item.lostDate
+              : item.foundDate;
+
+            return (
+              <article
+                className="report-card"
+                key={`${item.reportType}-${item.id}`}
               >
-                <option value="">All Documents</option>
-                <option value="Aadhaar Card">Aadhaar Card</option>
-                <option value="PAN Card">PAN Card</option>
-                <option value="Driving License">Driving License</option>
-                <option value="Passport">Passport</option>
-                <option value="Voter ID">Voter ID</option>
-                <option value="College ID">College ID</option>
-                <option value="Employee ID">Employee ID</option>
-                <option value="Vehicle Registration">Vehicle Registration</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
+                <span
+                  className={`status-badge ${
+                    isMissing ? "status-missing" : "status-found"
+                  }`}
+                >
+                  {isMissing ? "Missing" : "Found"}
+                </span>
 
-            <div className="form-group">
-              <label>Location</label>
-              <input
-                type="text"
-                placeholder="Enter location"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-              />
-            </div>
+                <h3>{item.documentType || "Document"}</h3>
+                <p>
+                  <strong>Name:</strong>{" "}
+                  {item.documentName || "Not provided"}
+                </p>
+                <p>
+                  <strong>Location:</strong>{" "}
+                  {itemLocation || "Not provided"}
+                </p>
+                <p>
+                  <strong>Date:</strong> {itemDate || "Not provided"}
+                </p>
+                {item.description && <p>{item.description}</p>}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// =========================
+// LOGIN
+// =========================
+
+function Login({ setActivePage, onAuthSuccess }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    try {
+      setLoading(true);
+
+      await signInWithEmailAndPassword(
+        auth,
+        email.trim(),
+        password
+      );
+
+      onAuthSuccess();
+    } catch (error) {
+      console.error("Login failed:", error);
+
+      if (
+        error.code === "auth/invalid-credential" ||
+        error.code === "auth/wrong-password" ||
+        error.code === "auth/user-not-found"
+      ) {
+        alert("Incorrect email or password. Please try again.");
+      } else if (error.code === "auth/invalid-email") {
+        alert("Please enter a valid email address.");
+      } else {
+        alert(error.message || "Login failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section className="auth-page">
+      <div className="auth-card">
+        <h1>Welcome Back</h1>
+        <p>Log in to access your document reports.</p>
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="login-email">Email Address</label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="Enter your email"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="login-password">Password</label>
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Enter your password"
+              required
+            />
           </div>
 
           <button
             type="submit"
-            className="submit-btn"
+            className="btn-primary form-submit"
             disabled={loading}
           >
-            {loading ? "Searching..." : "🔍 Search"}
+            {loading ? "Logging in..." : "Login"}
           </button>
         </form>
 
-        {error && <p className="error-message">{error}</p>}
+        <p className="auth-switch">
+          Don't have an account?{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setActivePage("register")}
+          >
+            Register
+          </button>
+        </p>
+      </div>
+    </section>
+  );
+}
 
-        {searched && !loading && !error && (
-          <div className="search-result">
-            <h2>Search Results ({results.length})</h2>
+// =========================
+// REGISTER
+// =========================
 
-            {results.length === 0 ? (
-              <p>No matching found-document reports were found.</p>
-            ) : (
-              results.map((doc) => (
-                <div className="result-card" key={doc.id}>
-                  <div>
-                    <h3>{doc.documentName || doc.documentType}</h3>
-                    <p>Document Type: {doc.documentType}</p>
-                    <p>Found Location: {doc.foundLocation || "Not specified"}</p>
-                    <p>Found Date: {doc.foundDate || "Not specified"}</p>
-                    <p>Description: {doc.description || "No description"}</p>
-                    <p>Status: {doc.status || "Under verification"}</p>
-                  </div>
-                  <span className="match-badge">Report Found</span>
-                </div>
-              ))
-            )}
+function Register({ setActivePage, onAuthSuccess }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    if (password !== confirmPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
+
+    if (password.length < 6) {
+      alert("Your password must contain at least 6 characters.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        email.trim(),
+        password
+      );
+
+      await updateProfile(userCredential.user, {
+        displayName: name.trim(),
+      });
+
+      onAuthSuccess();
+    } catch (error) {
+      console.error("Registration failed:", error);
+
+      if (error.code === "auth/email-already-in-use") {
+        alert("An account with this email already exists. Please log in.");
+      } else if (error.code === "auth/invalid-email") {
+        alert("Please enter a valid email address.");
+      } else if (error.code === "auth/weak-password") {
+        alert("Please choose a stronger password.");
+      } else {
+        alert(error.message || "Registration failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section className="auth-page">
+      <div className="auth-card">
+        <h1>Create an Account</h1>
+        <p>Register to report and search for documents.</p>
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="register-name">Full Name</label>
+            <input
+              id="register-name"
+              type="text"
+              autoComplete="name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Enter your full name"
+              required
+            />
           </div>
-        )}
-      </div>
-    </section>
-  );
-}
-/* ================= LOGIN ================= */
-function Login({ setActivePage }) {
-  const handleSubmit = (e) => { e.preventDefault(); alert("Login will be connected to the backend later."); };
-  return (
-    <section className="auth-page">
-      <div className="auth-container">
-        <div className="auth-icon">🔐</div><h1>Welcome Back</h1><p>Login to your DocFind account.</p>
-        <form onSubmit={handleSubmit}>
-          <div className="form-group"><label>Email</label><input type="email" placeholder="Enter your email" required /></div>
-          <div className="form-group"><label>Password</label><input type="password" placeholder="Enter your password" required /></div>
-          <button className="submit-btn">Login</button>
+
+          <div className="form-group">
+            <label htmlFor="register-email">Email Address</label>
+            <input
+              id="register-email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="Enter your email"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="register-password">Password</label>
+            <input
+              id="register-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="At least 6 characters"
+              minLength={6}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="register-confirm-password">Confirm Password</label>
+            <input
+              id="register-confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              placeholder="Re-enter your password"
+              minLength={6}
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="btn-primary form-submit"
+            disabled={loading}
+          >
+            {loading ? "Creating Account..." : "Register"}
+          </button>
         </form>
-        <p className="switch-auth">Don't have an account? <button onClick={() => setActivePage("register")}>Register</button></p>
+
+        <p className="auth-switch">
+          Already have an account?{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setActivePage("login")}
+          >
+            Login
+          </button>
+        </p>
       </div>
     </section>
   );
 }
 
-/* ================= REGISTER ================= */
-function Register({ setActivePage }) {
-  const handleSubmit = (e) => { e.preventDefault(); alert("Registration will be connected to the backend later."); };
-  return (
-    <section className="auth-page">
-      <div className="auth-container">
-        <div className="auth-icon">👤</div><h1>Create Account</h1><p>Register to report and recover documents.</p>
-        <form onSubmit={handleSubmit}>
-          <div className="form-group"><label>Full Name</label><input type="text" placeholder="Enter your full name" required /></div>
-          <div className="form-group"><label>Email</label><input type="email" placeholder="Enter your email" required /></div>
-          <div className="form-group"><label>Phone Number</label><input type="tel" placeholder="Enter your phone number" required /></div>
-          <div className="form-group"><label>Password</label><input type="password" placeholder="Create a password" required /></div>
-          <button className="submit-btn">Create Account</button>
-        </form>
-        <p className="switch-auth">Already have an account? <button onClick={() => setActivePage("login")}>Login</button></p>
-      </div>
-    </section>
-  );
-}
+// =========================
+// FOOTER
+// =========================
 
-/* ================= FOOTER ================= */
 function Footer() {
   return (
-    <footer>
-      <div className="footer-content">
-        <div><h3>📄 DocFind</h3><p>A cloud-based missing document reporting and recovery system.</p></div>
-        <div><h4>System</h4><p>Secure Reporting</p><p>Cloud Storage</p><p>Document Matching</p></div>
-        <div><h4>Security</h4><p>Protected Accounts</p><p>Private Information</p><p>Secure Storage</p></div>
-      </div>
-      <div className="footer-bottom">© 2026 DocFind. Missing Document Reporting System.</div>
+    <footer className="footer">
+      <p>
+        © {new Date().getFullYear()} MissingDoc. Helping important documents
+        find their way home.
+      </p>
     </footer>
   );
 }
 
-export default App;

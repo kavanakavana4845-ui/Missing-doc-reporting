@@ -1,6 +1,8 @@
 
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBfg53iNMAjJ8vICERoWOrY1GlOYc3-4oQ",
@@ -9,9 +11,11 @@ const firebaseConfig = {
   storageBucket: "missing-doc-reporting.firebasestorage.app",
   messagingSenderId: "343328102777",
   appId: "1:343328102777:web:42be23498287dba6e0f7a8",
-  measurementId: "G-3T2E6PSKD5"
+  measurementId: "G-3T2E6PSKD5",
 };
 
 const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
+export const auth = getAuth(app);
+export const storage = getStorage(app);
