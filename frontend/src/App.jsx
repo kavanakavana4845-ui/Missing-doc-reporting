@@ -19,6 +19,7 @@ import {
 // =========================
 // MAIN APP
 // =========================
+// Masking function - add here
 
 export default function App() {
   const [activePage, setActivePage] = useState("home");
@@ -764,6 +765,19 @@ function SearchDocuments() {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  function maskNumber(type, num) {
+    if (!num) return "N/A";
+    num = num.toString();
+    if (num.length <= 4) return num;
+    if (type && type.toLowerCase().includes("aadhaar")) {
+      return "XXXX XXXX " + num.slice(-4);
+    }
+    if (type && type.toLowerCase().includes("pan")) {
+      return "XXXXX" + num.slice(-4);
+    }
+    return "XXXX-" + num.slice(-4);
+  }
+
   const handleSearch = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -776,7 +790,6 @@ function SearchDocuments() {
         const snapshot = await getDocs(
           collection(db, "missingDocuments")
         );
-
         snapshot.forEach((documentSnapshot) => {
           allResults.push({
             id: documentSnapshot.id,
@@ -790,7 +803,6 @@ function SearchDocuments() {
         const snapshot = await getDocs(
           collection(db, "foundDocuments")
         );
-
         snapshot.forEach((documentSnapshot) => {
           allResults.push({
             id: documentSnapshot.id,
@@ -801,22 +813,18 @@ function SearchDocuments() {
       }
 
       const normalizedLocation = location.trim().toLowerCase();
-
       const filtered = allResults.filter((item) => {
         const matchesType =
           !documentType || item.documentType === documentType;
-
         const itemLocation =
           item.reportType === "missing"
             ? item.lostLocation
             : item.foundLocation;
-
         const matchesLocation =
           !normalizedLocation ||
           (itemLocation || "")
             .toLowerCase()
             .includes(normalizedLocation);
-
         return matchesType && matchesLocation;
       });
 
@@ -880,11 +888,7 @@ function SearchDocuments() {
           </select>
         </div>
 
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={loading}
-        >
+        <button type="submit" className="btn-primary" disabled={loading}>
           {loading ? "Searching..." : "Search"}
         </button>
       </form>
@@ -907,9 +911,7 @@ function SearchDocuments() {
               const itemLocation = isMissing
                 ? item.lostLocation
                 : item.foundLocation;
-              const itemDate = isMissing
-                ? item.lostDate
-                : item.foundDate;
+              const itemDate = isMissing ? item.lostDate : item.foundDate;
 
               return (
                 <article className="report-card" key={`${item.reportType}-${item.id}`}>
@@ -925,6 +927,13 @@ function SearchDocuments() {
                   <p>
                     <strong>Name:</strong>{" "}
                     {item.documentName || "Not provided"}
+                  </p>
+                  <p>
+                    <strong>Document No:</strong>{" "}
+                    {maskNumber(
+                      item.documentType,
+                      item.documentNumber || item.documentNo || item.number || item.docNumber
+                    )}
                   </p>
                   <p>
                     <strong>Location:</strong>{" "}
